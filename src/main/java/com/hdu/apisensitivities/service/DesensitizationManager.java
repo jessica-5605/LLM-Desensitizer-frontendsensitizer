@@ -9,6 +9,8 @@ import com.hdu.apisensitivities.service.ScenarioPerception.ScenarioAnalysisResul
 import com.hdu.apisensitivities.service.ScenarioPerception.ScenarioPerceptionService;
 import com.hdu.apisensitivities.service.SensitiveDetection.SensitiveDetectionService;
 import com.hdu.apisensitivities.service.Desensitization.DesensitizationStrategy;
+import com.hdu.apisensitivities.service.Desensitization.DesensitizeRequestContext;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -56,9 +58,9 @@ public class DesensitizationManager {
     public DesensitizationManager(SensitiveDetectionService detectionService,
             List<DesensitizationStrategy> strategies,
             DataParserManager dataParserManager,
-                    
+
             @org.springframework.beans.factory.annotation.Qualifier("keywordBasedScenarioPerceptionService")
-            
+
             ScenarioPerceptionService scenarioPerceptionService,
             @org.springframework.beans.factory.annotation.Qualifier("llmScenarioPerceptionService") ScenarioPerceptionService llmScenarioPerceptionService) {
         this.detectionService = detectionService;
@@ -88,6 +90,14 @@ public class DesensitizationManager {
      */
     public DesensitizationResponse process(DesensitizationRequest request) {
         try {
+            // 1. 【在最开头织入】：把请求对象中的 sessionId 提取并存入线程上下文
+            // 顺便在这里做一个严谨的无参数兜底，防止前端没传值导致后续代码崩溃
+            String sessionId = request.getSessionId();
+            if (sessionId == null || sessionId.isEmpty()) {
+                sessionId = "SESSION_" + Math.abs(request.getMainContent().hashCode());
+            }
+            DesensitizeRequestContext.setSessionId(sessionId);
+
             // ========== 步骤1：数据解析 ==========
             // 记录请求的数据类型
             String dataType = request.getDataType();
@@ -115,48 +125,51 @@ public class DesensitizationManager {
             // // 情景分析：根据用户设置决定是否进行自动情景感知
             // ScenarioAnalysisResult scenarioResult;
             // if (request.isAutoScenarioDetection()) {
-            //     // 判断使用哪种情景感知服务
-            //     // 如果请求中指定了使用LLM分析，则优先使用LLM服务
-            //     boolean useLlm = request.getMetadata() != null &&
-            //             "true".equalsIgnoreCase(String.valueOf(request.getMetadata().get("useLlmScenario")));
+            // // 判断使用哪种情景感知服务
+            // // 如果请求中指定了使用LLM分析，则优先使用LLM服务
+            // boolean useLlm = request.getMetadata() != null &&
+            // "true".equalsIgnoreCase(String.valueOf(request.getMetadata().get("useLlmScenario")));
 
-            //     if (useLlm) {
-            //         log.info("使用LLM进行情景分析...");
-            //         scenarioResult = llmScenarioPerceptionService.analyzeScenario(request);
-            //     } else {
-            //         // 默认使用关键词匹配，速度快且成本低
-            //         scenarioResult = scenarioPerceptionService.analyzeScenario(request);
-            //     }
-
-            //     // 检查用户是否手动指定了情景类型
-            //     if (request.getManualScenarioType() != null && !request.getManualScenarioType().isEmpty()) {
-            //         // 使用用户手动指定的情景类型
-            //         try {
-            //             ScenarioAnalysisResult.ScenarioType manualType = ScenarioAnalysisResult.ScenarioType
-            //                     .valueOf(request.getManualScenarioType().toUpperCase());
-            //             scenarioResult.setScenarioType(manualType);
-            //             scenarioResult.setConfidence(1.0); // 手动指定的情景置信度为1.0
-            //             log.info("使用用户手动指定的情景类型: {}", manualType);
-            //         } catch (IllegalArgumentException e) {
-            //             log.warn("用户手动指定的情景类型无效: {}, 使用自动识别的情景类型",
-            //                     request.getManualScenarioType());
-            //         }
-            //     }
-
-            //     log.info("情景分析完成，情景类型: {}, 置信度: {}",
-            //             scenarioResult.getScenarioType(), String.format("%.2f", scenarioResult.getConfidence()));
-
-            //     // 根据分析服务类型调整检测范围（因为不同服务的adjustDetectionScope逻辑可能不同）
-            //     if (useLlm) {
-            //         llmScenarioPerceptionService.adjustDetectionScope(request, scenarioResult);
-            //     } else {
-            //         scenarioPerceptionService.adjustDetectionScope(request, scenarioResult);
-            //     }
+            // if (useLlm) {
+            // log.info("使用LLM进行情景分析...");
+            // scenarioResult = llmScenarioPerceptionService.analyzeScenario(request);
             // } else {
-            //     // 自动情景感知关闭，使用默认情景
-            //     scenarioResult = scenarioPerceptionService.getDefaultScenario();
-            //     scenarioPerceptionService.adjustDetectionScope(request, scenarioResult);
-            //     log.info("自动情景感知已关闭，使用默认情景类型: {}", scenarioResult.getScenarioType());
+            // // 默认使用关键词匹配，速度快且成本低
+            // scenarioResult = scenarioPerceptionService.analyzeScenario(request);
+            // }
+
+            // // 检查用户是否手动指定了情景类型
+            // if (request.getManualScenarioType() != null &&
+            // !request.getManualScenarioType().isEmpty()) {
+            // // 使用用户手动指定的情景类型
+            // try {
+            // ScenarioAnalysisResult.ScenarioType manualType =
+            // ScenarioAnalysisResult.ScenarioType
+            // .valueOf(request.getManualScenarioType().toUpperCase());
+            // scenarioResult.setScenarioType(manualType);
+            // scenarioResult.setConfidence(1.0); // 手动指定的情景置信度为1.0
+            // log.info("使用用户手动指定的情景类型: {}", manualType);
+            // } catch (IllegalArgumentException e) {
+            // log.warn("用户手动指定的情景类型无效: {}, 使用自动识别的情景类型",
+            // request.getManualScenarioType());
+            // }
+            // }
+
+            // log.info("情景分析完成，情景类型: {}, 置信度: {}",
+            // scenarioResult.getScenarioType(), String.format("%.2f",
+            // scenarioResult.getConfidence()));
+
+            // // 根据分析服务类型调整检测范围（因为不同服务的adjustDetectionScope逻辑可能不同）
+            // if (useLlm) {
+            // llmScenarioPerceptionService.adjustDetectionScope(request, scenarioResult);
+            // } else {
+            // scenarioPerceptionService.adjustDetectionScope(request, scenarioResult);
+            // }
+            // } else {
+            // // 自动情景感知关闭，使用默认情景
+            // scenarioResult = scenarioPerceptionService.getDefaultScenario();
+            // scenarioPerceptionService.adjustDetectionScope(request, scenarioResult);
+            // log.info("自动情景感知已关闭，使用默认情景类型: {}", scenarioResult.getScenarioType());
             // }
 
             // ========== 步骤2：情景分析（完全禁用）==========
@@ -199,6 +212,9 @@ public class DesensitizationManager {
                     Collections.emptyList(),
                     false,
                     "脱敏处理失败: " + e.getMessage());
+        } finally {
+            // 2. 【在最终块织入】：强行清理，防止线程复用导致的内存泄漏
+            DesensitizeRequestContext.clear();
         }
     }
 

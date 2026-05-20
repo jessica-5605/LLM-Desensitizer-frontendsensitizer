@@ -3,6 +3,8 @@ package com.hdu.apisensitivities.service.Desensitization;
 import com.hdu.apisensitivities.entity.SensitiveEntity;
 import com.hdu.apisensitivities.entity.SensitiveType;
 import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -11,6 +13,10 @@ import java.util.stream.Collectors;
 @Slf4j
 @Component
 public class MaskDesensitizationStrategy implements DesensitizationStrategy {
+    
+    // 1. 在你的类头部注入全局一致性仓库
+    @Autowired
+    private GlobalSessionContextRepository contextRepository;
 
     private final Map<SensitiveType, String> MASK_TEMPLATES = new HashMap<>();
 
@@ -45,25 +51,37 @@ public class MaskDesensitizationStrategy implements DesensitizationStrategy {
         if (validEntities.isEmpty()) {
             return text;
         }
+        // 【新增】获取当前线程绑定的会话 ID
+        String sessionId = DesensitizeRequestContext.getSessionId();
 
         String result = text;
         for (SensitiveEntity entity : validEntities) {
             try {
-                String mask = MASK_TEMPLATES.getOrDefault(entity.getType(), "[MASKED]");
-                // 确保索引不越界
+                String typeStr = entity.getType().name();
+                String originalText = entity.getOriginalText();
+
+                // 【核心改造】：不再死板地拿 MASK_TEMPLATES.get()
+                // 而是问中央仓库要：如果是同一个人，吐出带有相同序号的占位符！
+                String mask = contextRepository.getOrCreateConsistencyValue(sessionId, originalText, typeStr,
+                        currentId -> {
+                            // 如果是新出现的，通过自增出来的 currentId 动态拼接
+                            String template = MASK_TEMPLATES.getOrDefault(entity.getType(), "[MASKED]");
+                            // 如果原本是 "[NAME]"，现在一致性升级为 "[NAME_1]"
+                            if (template.endsWith("]")) {
+                                return template.substring(0, template.length() - 1) + "_" + currentId + "]";
+                            }
+                            return template + "_" + currentId;
+                        });
+
                 int start = Math.max(0, entity.getStart());
                 int end = Math.min(text.length(), entity.getEnd());
                 if (start <= end) {
-                    result = result.substring(0, start) +
-                            mask +
-                            result.substring(end);
+                    result = result.substring(0, start) + mask + result.substring(end);
                 }
             } catch (StringIndexOutOfBoundsException e) {
                 log.warn("脱敏过程中出现索引越界，实体: {}, 文本长度: {}", entity, text.length());
-                // 忽略这个实体，继续处理下一个
             }
         }
-
         return result;
     }
 
